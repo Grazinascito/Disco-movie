@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@variant dark (&:where(.dark, .dark *));
+
+/* Custom Scrollbars mimicking original Discord desktop Client */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background-color: #1a1b1e;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #ccd0d4;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background-color: #111214;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: #b0b4b8;
+}
+
+/* Compact Discord tag text sizing */
+.text-xxs {
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}

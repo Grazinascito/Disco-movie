@@ -1,0 +1,6 @@
+{
+  "name": "Discord Style Movie App",
+  "description": "A fully responsive React movie database application with a highly-polished Discord-inspired UI, featuring advanced search, genre filters, custom pagination, light/dark mode toggle, user favorites, and a detailed carousel modal.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
