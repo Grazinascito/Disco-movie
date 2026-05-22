@@ -1,0 +1,293 @@
+---
+description: Frontend build tools (Vite/Webpack) and testing architecture (unit, integration, E2E)
+globs: **/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Build Tools & Testing — Full Reference
+
+## Vite Configuration
+
+```ts
+// vite.config.ts
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { visualizer } from 'rollup-plugin-visualizer';
+import path from 'path';
+
+export default defineConfig({
+  plugins: [react(), visualizer({ template: 'treemap', open: true, gzipSize: true })],
+
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+      '@components': path.resolve(__dirname, './src/components'),
+      '@utils': path.resolve(__dirname, './src/utils')
+    }
+  },
+
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'ui-vendor': ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu'],
+          'utils': ['date-fns', 'lodash-es']
+        }
+      }
+    },
+    chunkSizeWarningLimit: 1000
+  },
+
+  server: {
+    port: 3000,
+    proxy: {
+      '/api': { target: 'http://localhost:8000', changeOrigin: true, rewrite: p => p.replace(/^\/api/, '') }
+    }
+  }
+});
+```
+
+## Webpack Configuration
+
+```js
+// webpack.config.js
+const path = require('path');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+
+module.exports = (env, argv) => {
+  const isDev = argv.mode === 'development';
+
+  return {
+    entry: { main: './src/index.tsx', vendor: ['react', 'react-dom'] },
+
+    output: {
+      path: path.resolve(__dirname, 'dist'),
+      filename: isDev ? '[name].js' : '[name].[contenthash].js',
+      chunkFilename: '[name].[contenthash].chunk.js',
+      clean: true
+    },
+
+    optimization: {
+      splitChunks: {
+        chunks: 'all',
+        cacheGroups: {
+          vendor: { test: /[\\/]node_modules[\\/]/, name: 'vendors', priority: 10 },
+          common: { minChunks: 2, priority: 5, reuseExistingChunk: true }
+        }
+      },
+      runtimeChunk: 'single'
+    },
+
+    module: {
+      rules: [
+        { test: /\.(ts|tsx)$/, use: 'ts-loader', exclude: /node_modules/ },
+        {
+          test: /\.css$/,
+          use: [isDev ? 'style-loader' : MiniCssExtractPlugin.loader, 'css-loader', 'postcss-loader']
+        },
+        { test: /\.(png|jpg|gif|svg)$/, type: 'asset', parser: { dataUrlCondition: { maxSize: 8 * 1024 } } }
+      ]
+    },
+
+    plugins: [
+      new HtmlWebpackPlugin({ template: './public/index.html' }),
+      !isDev && new MiniCssExtractPlugin({ filename: '[name].[contenthash].css' })
+    ].filter(Boolean),
+
+    devServer: { port: 3000, hot: true, historyApiFallback: true }
+  };
+};
+```
+
+## Testing Architecture
+
+### Testing Pyramid
+```
+      /\
+     /E2E\          ← Full user flows (Playwright / Cypress)
+    /──────\
+   /Integr. \       ← Component + hook interactions (RTL)
+  /──────────\
+ /   Unit    \      ← Pure functions, isolated components (Jest + RTL)
+/────────────\
+```
+
+### Unit Tests
+
+```ts
+// Pure function test
+describe('calculateCartTotal', () => {
+  it('sums item prices', () => {
+    expect(calculateCartTotal([{ price: 10, quantity: 2 }, { price: 5, quantity: 3 }])).toBe(35);
+  });
+  it('handles empty cart', () => {
+    expect(calculateCartTotal([])).toBe(0);
+  });
+});
+
+// Isolated component test
+describe('UserCard', () => {
+  it('renders user information', () => {
+    render(<UserCard user={{ name: 'John', email: 'john@example.com' }} />);
+    expect(screen.getByText('John')).toBeInTheDocument();
+  });
+
+  it('calls onEdit when edit button is clicked', () => {
+    const onEdit = jest.fn();
+    render(<UserCard user={mockUser} onEdit={onEdit} />);
+    fireEvent.click(screen.getByText('Edit'));
+    expect(onEdit).toHaveBeenCalled();
+  });
+});
+```
+
+### Integration Tests
+
+```ts
+describe('LoginFlow', () => {
+  it('logs in user and redirects to dashboard', async () => {
+    const { user } = renderWithRouter(<LoginPage />);
+    await user.type(screen.getByLabelText('Email'), 'user@example.com');
+    await user.type(screen.getByLabelText('Password'), 'password123');
+    await user.click(screen.getByText('Login'));
+    await waitFor(() => expect(screen.getByText('Dashboard')).toBeInTheDocument());
+  });
+});
+```
+
+### E2E Tests (Playwright)
+
+```ts
+describe('Checkout Flow', () => {
+  it('completes purchase', async () => {
+    await page.goto('http://localhost:3000');
+    await page.click('[data-testid="product-1"]');
+    await page.click('[data-testid="add-to-cart"]');
+    await page.click('[data-testid="checkout"]');
+    await page.fill('[name="address"]', '123 Main St');
+    await page.fill('[name="cardNumber"]', '4242424242424242');
+    await page.click('[data-testid="place-order"]');
+    await expect(page.locator('[data-testid="order-confirmation"]')).toBeVisible();
+  });
+});
+```
+
+## Test Utilities
+
+### Provider Wrapper
+```tsx
+export function renderWithProviders(ui: React.ReactElement, { preloadedState }: { preloadedState?: Partial<AppState> } = {}) {
+  const store = createStore(preloadedState);
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  function Wrapper({ children }: { children: React.ReactNode }) {
+    return (
+      <Provider store={store}>
+        <QueryClientProvider client={queryClient}>
+          <BrowserRouter>{children}</BrowserRouter>
+        </QueryClientProvider>
+      </Provider>
+    );
+  }
+
+  return { ...render(ui, { wrapper: Wrapper }), store };
+}
+```
+
+### Data Factories
+```ts
+export function createMockUser(overrides?: Partial<User>): User {
+  return { id: '1', email: 'test@example.com', name: 'Test User', role: 'user', ...overrides };
+}
+
+export function createMockProduct(overrides?: Partial<Product>): Product {
+  return { id: 'p1', name: 'Widget', price: 9.99, stock: 10, ...overrides };
+}
+```
+
+### Dependency Injection for Testability
+```tsx
+// Define services as a context
+interface Services { api: ApiClient; storage: StorageService; logger: Logger; }
+const ServicesContext = createContext<Services>(null!);
+export function useServices() { return useContext(ServicesContext); }
+
+// In tests, swap real services for mocks
+test('loads user data', () => {
+  const mockApi = { get: jest.fn().mockResolvedValue(createMockUser()) };
+  render(
+    <ServicesContext.Provider value={{ api: mockApi as any, logger: console, storage: localStorage }}>
+      <UserProfile />
+    </ServicesContext.Provider>
+  );
+});
+```
+
+## Lazy Loading Patterns
+
+### Image Lazy Loading
+```tsx
+function LazyImage({ src, alt }: { src: string; alt: string }) {
+  const [imageSrc, setImageSrc] = useState<string>();
+  const imgRef = useRef<HTMLImageElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setImageSrc(src); observer.disconnect(); } },
+      { rootMargin: '100px' }
+    );
+    if (imgRef.current) observer.observe(imgRef.current);
+    return () => observer.disconnect();
+  }, [src]);
+
+  return <img ref={imgRef} src={imageSrc || 'placeholder.jpg'} alt={alt} loading="lazy" />;
+}
+```
+
+### Infinite Scroll
+```tsx
+function InfiniteList() {
+  const { data, hasNextPage, isLoading, fetchNextPage } = useInfiniteQuery({
+    queryKey: ['items'],
+    queryFn: ({ pageParam = 1 }) => fetchItems(pageParam),
+    getNextPageParam: (lastPage, pages) => lastPage.hasMore ? pages.length + 1 : undefined
+  });
+
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting && hasNextPage && !isLoading) fetchNextPage();
+    });
+    if (loadMoreRef.current) observer.observe(loadMoreRef.current);
+    return () => observer.disconnect();
+  }, [hasNextPage, isLoading, fetchNextPage]);
+
+  return (
+    <div>
+      {data?.pages.map((page, i) => (
+        <div key={i}>{page.items.map(item => <ItemCard key={item.id} item={item} />)}</div>
+      ))}
+      {hasNextPage && <div ref={loadMoreRef}>Loading more...</div>}
+    </div>
+  );
+}
+```
+
+## Service Worker Caching
+
+```js
+// sw.js
+const CACHE_NAME = 'app-v1';
+const STATIC_ASSETS = ['/', '/styles.css', '/app.js'];
+
+self.addEventListener('install', e =>
+  e.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS)))
+);
+
+self.addEventListener('fetch', e =>
+  e.respondWith(caches.match(e.request).then(res => res || fetch(e.request)))
+);
+```

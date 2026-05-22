@@ -1,0 +1,351 @@
+---
+description: Frontend design patterns — MVC, MVVM, Flux, Observer, Factory, Module, Zustand, Jotai
+globs: **/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Design Patterns — Full Reference
+
+## 1. MVC (Model-View-Controller)
+
+```ts
+// Model — data + observer subscriptions
+class TodoModel {
+  private todos: Todo[] = [];
+  private observers: Set<(todos: Todo[]) => void> = new Set();
+
+  addTodo(text: string) {
+    this.todos.push({ id: Date.now(), text, completed: false });
+    this.notify();
+  }
+
+  toggleTodo(id: number) {
+    const todo = this.todos.find(t => t.id === id);
+    if (todo) { todo.completed = !todo.completed; this.notify(); }
+  }
+
+  getTodos() { return [...this.todos]; }
+
+  subscribe(observer: (todos: Todo[]) => void) {
+    this.observers.add(observer);
+    return () => this.observers.delete(observer);
+  }
+
+  private notify() { this.observers.forEach(o => o(this.getTodos())); }
+}
+
+// Controller — translates intent into model calls
+class TodoController {
+  constructor(private model: TodoModel) {}
+  handleAddTodo(text: string) { if (text.trim()) this.model.addTodo(text); }
+  handleToggleTodo(id: number) { this.model.toggleTodo(id); }
+}
+
+// View — React component
+function TodoView() {
+  const [model] = useState(() => new TodoModel());
+  const [controller] = useState(() => new TodoController(model));
+  const [todos, setTodos] = useState(model.getTodos());
+  const [input, setInput] = useState('');
+
+  useEffect(() => model.subscribe(setTodos), [model]);
+
+  return (
+    <form onSubmit={e => { e.preventDefault(); controller.handleAddTodo(input); setInput(''); }}>
+      <input value={input} onChange={e => setInput(e.target.value)} />
+      <button type="submit">Add</button>
+      <ul>
+        {todos.map(todo => (
+          <li key={todo.id}>
+            <input type="checkbox" checked={todo.completed}
+              onChange={() => controller.handleToggleTodo(todo.id)} />
+            {todo.text}
+          </li>
+        ))}
+      </ul>
+    </form>
+  );
+}
+```
+
+## 2. MVVM (Model-View-ViewModel)
+
+```ts
+// Model (plain data + service)
+class TaskService {
+  async fetchTasks(): Promise<Task[]> { return fetch('/api/tasks').then(r => r.json()); }
+  async updateTask(id: string, updates: Partial<Task>): Promise<Task> {
+    return fetch(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(updates) }).then(r => r.json());
+  }
+}
+
+// ViewModel — computed state + commands
+class TaskListViewModel {
+  private tasks = signal<Task[]>([]);
+  private loading = signal(false);
+  private filter = signal<'all' | 'active' | 'completed'>('all');
+
+  constructor(private service: TaskService) {}
+
+  get filteredTasks() {
+    return computed(() => {
+      const f = this.filter.value;
+      const t = this.tasks.value;
+      if (f === 'active') return t.filter(x => !x.completed);
+      if (f === 'completed') return t.filter(x => x.completed);
+      return t;
+    });
+  }
+
+  async loadTasks() {
+    this.loading.value = true;
+    try { this.tasks.value = await this.service.fetchTasks(); }
+    finally { this.loading.value = false; }
+  }
+
+  async toggleTask(id: string) {
+    const task = this.tasks.value.find(t => t.id === id);
+    if (!task) return;
+    const updated = await this.service.updateTask(id, { completed: !task.completed });
+    this.tasks.value = this.tasks.value.map(t => t.id === id ? updated : t);
+  }
+
+  setFilter(filter: 'all' | 'active' | 'completed') { this.filter.value = filter; }
+}
+
+// View
+function TaskListView() {
+  const [vm] = useState(() => new TaskListViewModel(new TaskService()));
+  useEffect(() => { vm.loadTasks(); }, [vm]);
+  const tasks = useSignal(vm.filteredTasks);
+  return (
+    <ul>
+      {tasks.map(task => (
+        <li key={task.id}>
+          <input type="checkbox" checked={task.completed} onChange={() => vm.toggleTask(task.id)} />
+          {task.title}
+        </li>
+      ))}
+    </ul>
+  );
+}
+```
+
+## 3. Flux Architecture
+
+```ts
+// Actions
+enum ActionType { ADD_ITEM = 'ADD_ITEM', REMOVE_ITEM = 'REMOVE_ITEM', CLEAR_CART = 'CLEAR_CART' }
+class CartActions {
+  static addItem(item: CartItem) { return { type: ActionType.ADD_ITEM, payload: item }; }
+  static removeItem(id: string) { return { type: ActionType.REMOVE_ITEM, payload: id }; }
+}
+
+// Dispatcher
+class Dispatcher {
+  private callbacks: Set<(action: any) => void> = new Set();
+  register(cb: (action: any) => void) { this.callbacks.add(cb); return () => this.callbacks.delete(cb); }
+  dispatch(action: any) { this.callbacks.forEach(cb => cb(action)); }
+}
+const dispatcher = new Dispatcher();
+
+// Store
+class CartStore {
+  private items: Map<string, CartItem> = new Map();
+  private listeners: Set<() => void> = new Set();
+
+  constructor() { dispatcher.register(this.handleAction.bind(this)); }
+
+  private handleAction(action: any) {
+    switch (action.type) {
+      case ActionType.ADD_ITEM: {
+        const ex = this.items.get(action.payload.id);
+        ex ? (ex.quantity += action.payload.quantity) : this.items.set(action.payload.id, { ...action.payload });
+        break;
+      }
+      case ActionType.REMOVE_ITEM: this.items.delete(action.payload); break;
+      case ActionType.CLEAR_CART: this.items.clear(); break;
+    }
+    this.emitChange();
+  }
+
+  getItems() { return Array.from(this.items.values()); }
+  getTotal() { return this.getItems().reduce((s, i) => s + i.price * i.quantity, 0); }
+  subscribe(listener: () => void) { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  private emitChange() { this.listeners.forEach(l => l()); }
+}
+const cartStore = new CartStore();
+```
+
+## 4. Observer Pattern
+
+```ts
+interface Observer<T> { update(data: T): void; }
+
+class Subject<T> {
+  private observers: Set<Observer<T>> = new Set();
+  attach(observer: Observer<T>) { this.observers.add(observer); return () => this.observers.delete(observer); }
+  notify(data: T) { this.observers.forEach(o => o.update(data)); }
+}
+
+// Real-time user presence
+class UserPresenceService extends Subject<UserData> {
+  constructor() {
+    super();
+    const socket = new WebSocket('wss://api.example.com/presence');
+    socket.onmessage = (e) => this.notify(JSON.parse(e.data));
+  }
+}
+
+function UserStatus({ userId }: { userId: string }) {
+  const [isOnline, setIsOnline] = useState(false);
+  const service = useUserPresenceService();
+
+  useEffect(() => {
+    const observer: Observer<UserData> = {
+      update(data) { if (data.id === userId) setIsOnline(data.isOnline); }
+    };
+    return service.attach(observer);
+  }, [userId, service]);
+
+  return <span className={isOnline ? 'online' : 'offline'}>{isOnline ? 'Online' : 'Offline'}</span>;
+}
+```
+
+## 5. Factory Pattern
+
+```ts
+// Abstract factory for form inputs
+interface FormInput { render(): JSX.Element; validate(): boolean; getValue(): any; }
+
+class FormBuilder {
+  private factories = new Map([
+    ['text', new TextInputFactory()],
+    ['select', new SelectInputFactory()],
+    ['date', new DateInputFactory()]
+  ]);
+
+  createField(type: string, config: any): FormInput {
+    const factory = this.factories.get(type);
+    if (!factory) throw new Error(`Unknown field type: ${type}`);
+    return factory.create(config);
+  }
+
+  buildForm(schema: FormSchema): FormInput[] {
+    return schema.fields.map(f => this.createField(f.type, f.config));
+  }
+}
+
+function DynamicForm({ schema }: { schema: FormSchema }) {
+  const [fields] = useState(() => new FormBuilder().buildForm(schema));
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (fields.every(f => f.validate())) {
+      console.log(fields.map(f => f.getValue()));
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      {fields.map((field, i) => <div key={i}>{field.render()}</div>)}
+      <button type="submit">Submit</button>
+    </form>
+  );
+}
+```
+
+## 6. Module Pattern (Revealing Module)
+
+```ts
+const AuthModule = (() => {
+  let currentUser: User | null = null;
+  const listeners: Set<(user: User | null) => void> = new Set();
+
+  function notifyListeners() { listeners.forEach(l => l(currentUser)); }
+  function storeToken(token: string) { localStorage.setItem('auth_token', token); }
+  function clearToken() { localStorage.removeItem('auth_token'); }
+
+  return {
+    async login(email: string, password: string) {
+      const { user, token } = await fetch('/api/auth/login', {
+        method: 'POST', body: JSON.stringify({ email, password })
+      }).then(r => r.json());
+      currentUser = user;
+      storeToken(token);
+      notifyListeners();
+      return user;
+    },
+    logout() { currentUser = null; clearToken(); notifyListeners(); },
+    getCurrentUser() { return currentUser; },
+    isAuthenticated() { return currentUser !== null; },
+    subscribe(listener: (user: User | null) => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    }
+  };
+})();
+
+function useAuth() {
+  const [user, setUser] = useState(AuthModule.getCurrentUser());
+  useEffect(() => AuthModule.subscribe(setUser), []);
+  return { user, isAuthenticated: AuthModule.isAuthenticated(), login: AuthModule.login, logout: AuthModule.logout };
+}
+```
+
+## 7. State Management Libraries
+
+### Zustand
+```ts
+const useTodoStore = create<TodoState>()(
+  devtools(persist(
+    (set, get) => ({
+      todos: [],
+      filter: 'all' as const,
+      addTodo: (text) => set(s => ({ todos: [...s.todos, { id: crypto.randomUUID(), text, completed: false }] })),
+      toggleTodo: (id) => set(s => ({ todos: s.todos.map(t => t.id === id ? { ...t, completed: !t.completed } : t) })),
+      setFilter: (filter) => set({ filter }),
+      filteredTodos: () => {
+        const { todos, filter } = get();
+        if (filter === 'active') return todos.filter(t => !t.completed);
+        if (filter === 'completed') return todos.filter(t => t.completed);
+        return todos;
+      }
+    }),
+    { name: 'todo-storage' }
+  ))
+);
+```
+
+### Jotai (Atomic)
+```ts
+const cartItemsAtom = atomWithStorage<CartItem[]>('cart', []);
+const cartTotalAtom = atom(get => get(cartItemsAtom).reduce((s, i) => s + i.price * i.quantity, 0));
+const addToCartAtom = atom(null, (get, set, item: CartItem) => {
+  const items = get(cartItemsAtom);
+  const existing = items.find(i => i.id === item.id);
+  set(cartItemsAtom, existing
+    ? items.map(i => i.id === item.id ? { ...i, quantity: i.quantity + item.quantity } : i)
+    : [...items, item]
+  );
+});
+```
+
+### Redux-style Reducer
+```ts
+type AppAction =
+  | { type: 'user/login'; payload: User }
+  | { type: 'user/logout' }
+  | { type: 'cart/addItem'; payload: CartItem }
+  | { type: 'cart/removeItem'; payload: string };
+
+function appReducer(state: AppState, action: AppAction): AppState {
+  switch (action.type) {
+    case 'user/login': return { ...state, user: action.payload };
+    case 'user/logout': return { ...state, user: null, cart: [] };
+    case 'cart/addItem': return { ...state, cart: [...state.cart, action.payload] };
+    case 'cart/removeItem': return { ...state, cart: state.cart.filter(i => i.id !== action.payload) };
+    default: return state;
+  }
+}
+```

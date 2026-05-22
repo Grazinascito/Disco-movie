@@ -1,0 +1,208 @@
+---
+description: Frontend architecture — layers, components, state management, patterns, folder structure, and performance
+globs: **/*.{ts,tsx}
+alwaysApply: false
+---
+
+# Frontend Architecture
+
+## Layer Architecture
+
+```
+┌─────────────────────────────────────┐
+│        Presentation Layer           │
+│     (Components, Views, UI)         │
+├─────────────────────────────────────┤
+│       Application Layer             │
+│  (State Management, Routing, Hooks) │
+├─────────────────────────────────────┤
+│         Domain Layer                │
+│   (Business Logic, Entities)        │
+├─────────────────────────────────────┤
+│      Infrastructure Layer           │
+│    (API, Storage, Services)         │
+└─────────────────────────────────────┘
+```
+
+Keep each layer ignorant of layers above it. Domain and Infrastructure layers must never import React.
+
+## Component Design
+
+### Core Rules
+- **Single Responsibility**: one clear purpose per component
+- **Composition over inheritance**: compose with props/children, not class extension
+- **Container vs Presentational**: split data-fetching logic from rendering
+
+```tsx
+// Presentational — pure UI, no data fetching
+function UserCard({ user, onEdit, onDelete }: UserCardProps) { ... }
+
+// Container — owns data and callbacks, delegates rendering
+function UserCardContainer({ userId }: { userId: string }) {
+  const { data: user } = useQuery(['user', userId], () => fetchUser(userId));
+  const navigate = useNavigate();
+  return <UserCard user={user} onEdit={() => navigate(`/users/${userId}/edit`)} ... />;
+}
+```
+
+## State Management Decision Guide
+
+| State Type | Tool | When |
+|---|---|---|
+| UI-only (open/closed, input value) | `useState` | Component-local, not shared |
+| Shared between siblings | Lift to parent | Sibling components need the same value |
+| App-wide (auth, theme) | Context + `useReducer` | Infrequently-changing global state |
+| Server/async data | React Query / SWR | Anything fetched from an API |
+| Complex client state | Zustand or Jotai | Large client-side state, devtools needed |
+
+### Unidirectional Flow (always)
+Action → Reducer → State → View → Action
+
+Never mutate state directly. Use immutable updates (`{ ...state, key: value }`).
+
+## Design Patterns Quick Reference
+
+| Pattern | Best For |
+|---|---|
+| **MVC** | Classic separation; models with observer subscriptions |
+| **MVVM** | Computed/derived UI state; ViewModel as mediator |
+| **Flux** | Unidirectional data with central dispatcher and stores |
+| **Observer** | Real-time updates (WebSocket, presence, feeds) |
+| **Factory** | Dynamic component/form creation from schemas |
+| **Module (IIFE)** | Encapsulating private state with a public API |
+
+For full implementations, see the companion rules `frontend-architecture-patterns` and `frontend-architecture-build-testing`.
+
+## Folder Structure
+
+```
+src/
+├── features/           # Feature-based slices
+│   ├── auth/
+│   │   ├── components/
+│   │   ├── hooks/
+│   │   ├── services/
+│   │   ├── types/
+│   │   └── index.ts    # Public API of the feature
+│   ├── products/
+│   └── cart/
+├── shared/             # Cross-feature UI and utilities
+│   ├── components/
+│   ├── hooks/
+│   └── utils/
+├── core/               # App infrastructure
+│   ├── api/
+│   ├── router/
+│   └── store/
+└── pages/              # Route-level containers
+```
+
+### Naming Conventions
+| Kind | Convention | Example |
+|---|---|---|
+| Components | PascalCase | `UserProfile.tsx` |
+| Hooks | `use` prefix, camelCase | `useAuth.ts` |
+| Utilities | camelCase | `formatDate.ts` |
+| Constants | UPPER_SNAKE_CASE | `MAX_FILE_SIZE` |
+| Types/Interfaces | PascalCase | `UserRole`, `CartItem` |
+| Test files | same name + `.test` | `UserCard.test.tsx` |
+
+## Module Systems
+
+### Code Splitting
+```tsx
+// Route-based (preferred default)
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+
+// Wrap all lazy routes
+<Suspense fallback={<PageLoader />}>
+  <Routes>...</Routes>
+</Suspense>
+```
+
+### Tree Shaking
+```ts
+// Good — named imports
+import { debounce } from 'lodash-es';
+
+// Bad — imports entire bundle
+import _ from 'lodash';
+```
+
+Mark `sideEffects: ["*.css"]` in `package.json` to enable aggressive tree shaking.
+
+## Build Tools
+
+### Vite (recommended)
+```ts
+// vite.config.ts
+build: {
+  rollupOptions: {
+    output: {
+      manualChunks: {
+        'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+        'utils': ['date-fns', 'lodash-es']
+      }
+    }
+  }
+}
+```
+
+### Webpack
+Use `splitChunks` with `cacheGroups` to separate vendor and common chunks. Set `contenthash` in output filenames for long-term caching.
+
+## Testing Pyramid
+
+```
+        /\
+       /E2E\          ← Few, full user flows (Playwright)
+      /──────\
+     /Integr. \       ← Component + hook interactions
+    /──────────\
+   /   Unit    \      ← Functions, isolated components (Jest + RTL)
+  /────────────\
+```
+
+### Test Utility Pattern
+Always wrap renders with providers:
+```tsx
+function renderWithProviders(ui, { preloadedState } = {}) {
+  return render(ui, { wrapper: ({ children }) => (
+    <Provider store={store}>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>{children}</BrowserRouter>
+      </QueryClientProvider>
+    </Provider>
+  )});
+}
+```
+
+Use factory functions for test data:
+```ts
+function createMockUser(overrides?: Partial<User>): User {
+  return { id: '1', email: 'test@example.com', name: 'Test User', role: 'user', ...overrides };
+}
+```
+
+## Performance Checklist
+
+- [ ] Route-based code splitting with `lazy()` + `Suspense`
+- [ ] Named imports from tree-shakeable libraries
+- [ ] `manualChunks` separating vendor from app code
+- [ ] `contenthash` in output filenames for cache busting
+- [ ] React Query `staleTime` configured (avoid over-fetching)
+- [ ] Images use `loading="lazy"` and IntersectionObserver
+- [ ] Infinite lists use `useInfiniteQuery` + sentinel element
+- [ ] Service Worker caches static assets
+
+## Architecture Checklist
+
+- [ ] Each layer only depends on layers below it
+- [ ] Domain and infra layers have zero React imports
+- [ ] Components follow single responsibility
+- [ ] State is at the correct level (local → lifted → global → server)
+- [ ] Unidirectional data flow enforced (no circular updates)
+- [ ] Feature folders export a single `index.ts` public API
+- [ ] Naming conventions applied consistently
+- [ ] Tests exist at all three pyramid levels
+- [ ] Bundle analyzed for unexpected large chunks
