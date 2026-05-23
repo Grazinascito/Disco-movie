@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
 import { Movie, SidebarFilter } from '../types';
 import { MOVIES_DATA } from '../data/movies';
 
@@ -14,19 +14,16 @@ interface MovieContextType {
   theme: 'light' | 'dark';
   filter: SidebarFilter;
   searchQuery: string;
-  currentPage: number;
   selectedMovieId: string | null;
   sidebarCollapsed: boolean;
   setSearchQuery: (query: string) => void;
   setFilter: (filter: SidebarFilter) => void;
-  setCurrentPage: (page: number) => void;
   setSelectedMovieId: (id: string | null) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   toggleFavorite: (movieId: string) => void;
   toggleTheme: () => void;
   goToNextMovie: () => void;
   goToPreviousMovie: () => void;
-  itemsPerPage: number;
 }
 
 const MovieContext = createContext<MovieContextType | undefined>(undefined);
@@ -55,21 +52,15 @@ export function MovieProvider({ children }: { children: ReactNode }) {
 
   const [filter, setFilterState] = useState<SidebarFilter>({ type: 'all' });
   const [searchQuery, setSearchQueryState] = useState<string>('');
-  const [currentPage, setCurrentPageState] = useState<number>(1);
   const [selectedMovieId, setSelectedMovieId] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
 
-  const itemsPerPage = 8; // Fits beautifully in a 2x4 or 4x2 grid
-
-  // Reset page when filter or search changes
   const setFilter = (newFilter: SidebarFilter) => {
     setFilterState(newFilter);
-    setCurrentPageState(1);
   };
 
   const setSearchQuery = (query: string) => {
     setSearchQueryState(query);
-    setCurrentPageState(1);
   };
 
   // Synchronize theme to HTML class list for Tailwind v4 compatibility
@@ -104,8 +95,10 @@ export function MovieProvider({ children }: { children: ReactNode }) {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
   };
 
-  // Compute filtered movies based on active searches and filters
-  const filteredMovies = MOVIES_DATA.filter((movie) => {
+  // Compute filtered movies based on active searches and filters.
+  // useMemo garante que o filter só roda quando filter, searchQuery ou favorites mudam,
+  // e não em todo render do Provider (ex: mudança de tema, sidebarCollapsed, etc.).
+  const filteredMovies = useMemo(() => MOVIES_DATA.filter((movie) => {
     // 1. Sidebar filter check
     if (filter.type === 'trending' && !movie.isTrending) {
       return false;
@@ -134,7 +127,7 @@ export function MovieProvider({ children }: { children: ReactNode }) {
     }
 
     return true;
-  });
+  }), [filter, searchQuery, favorites]);
 
   // Navigate carousel in global modal view
   const goToNextMovie = () => {
@@ -162,19 +155,16 @@ export function MovieProvider({ children }: { children: ReactNode }) {
         theme,
         filter,
         searchQuery,
-        currentPage,
         selectedMovieId,
         sidebarCollapsed,
         setSearchQuery,
         setFilter,
-        setCurrentPage: setCurrentPageState,
         setSelectedMovieId,
         setSidebarCollapsed,
         toggleFavorite,
         toggleTheme,
         goToNextMovie,
         goToPreviousMovie,
-        itemsPerPage,
       }}
     >
       {children}

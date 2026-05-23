@@ -5,29 +5,23 @@
 
 import React from 'react';
 import { useMovie } from '../context/MovieContext';
-import { Movie } from '../types';
 import { Star, Clock, Play, RefreshCw, AlertCircle } from 'lucide-react';
 import { motion } from 'motion/react';
-import PaginationBar from './PaginationBar';
+import { usePagination } from '../shared/hooks/usePagination';
+import PaginationBar from '../shared/components/PaginationBar';
 
 export default function MovieGrid() {
   const { 
     filteredMovies, 
     favorites, 
     toggleFavorite, 
-    currentPage, 
-    setCurrentPage, 
-    itemsPerPage,
     setSelectedMovieId,
     setFilter,
     setSearchQuery
   } = useMovie();
 
-  // Slice results for pagination
-  const totalPages = Math.ceil(filteredMovies.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const paginatedMovies = filteredMovies.slice(startIndex, startIndex + itemsPerPage);
-  // o slice 
+  const { currentPage, totalPages, paginatedItems, startIndex, itemsPerPage, goToPage } =
+    usePagination(filteredMovies);
 
   const isFavorite = (id: string) => favorites.includes(id);
 
@@ -82,7 +76,7 @@ export default function MovieGrid() {
         id="movies-layout-grid"
         className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5"
       >
-        {paginatedMovies.map((movie, index) => {
+        {paginatedItems.map((movie, index) => {
           const starred = isFavorite(movie.id);
           return (
             <motion.div
@@ -178,14 +172,16 @@ export default function MovieGrid() {
         })}
       </div>
 
-      <PaginationBar
-        currentPage={currentPage}
-        totalPages={totalPages}
-        startIndex={startIndex}
-        itemsPerPage={itemsPerPage}
-        totalItems={filteredMovies.length}
-        onPageChange={setCurrentPage}
-      />
+      {totalPages > 1 && (
+        <PaginationBar
+          currentPage={currentPage}
+          totalPages={totalPages}
+          totalItems={filteredMovies.length}
+          startIndex={startIndex}
+          itemsPerPage={itemsPerPage}
+          onPageChange={goToPage}
+        />
+      )}
     </div>
   );
 }
