@@ -6,6 +6,7 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
 import { Movie, SidebarFilter } from '../types';
 import { MOVIES_DATA } from '../data/movies';
+import { filterMovies } from '../shared/utils/filterMovies';
 
 interface MovieContextType {
   movies: Movie[];
@@ -98,36 +99,10 @@ export function MovieProvider({ children }: { children: ReactNode }) {
   // Compute filtered movies based on active searches and filters.
   // useMemo garante que o filter só roda quando filter, searchQuery ou favorites mudam,
   // e não em todo render do Provider (ex: mudança de tema, sidebarCollapsed, etc.).
-  const filteredMovies = useMemo(() => MOVIES_DATA.filter((movie) => {
-    // 1. Sidebar filter check
-    if (filter.type === 'trending' && !movie.isTrending) {
-      return false;
-    }
-    if (filter.type === 'favorites' && !favorites.includes(movie.id)) {
-      return false;
-    }
-    if (filter.type === 'genre') {
-      const hasGenre = movie.genres.some(
-        (g) => g.toLowerCase() === filter.genreName.toLowerCase()
-      );
-      if (!hasGenre) return false;
-    }
-
-    // 2. Search query check
-    if (searchQuery.trim() !== '') {
-      const query = searchQuery.toLowerCase().trim();
-      const matchesTitle = movie.title.toLowerCase().includes(query);
-      const matchesDirector = movie.director.toLowerCase().includes(query);
-      const matchesCast = movie.cast.some((actor) => actor.toLowerCase().includes(query));
-      const matchesGenre = movie.genres.some((genre) => genre.toLowerCase().includes(query));
-
-      if (!matchesTitle && !matchesDirector && !matchesCast && !matchesGenre) {
-        return false;
-      }
-    }
-
-    return true;
-  }), [filter, searchQuery, favorites]);
+  const filteredMovies = useMemo(
+    () => filterMovies(MOVIES_DATA, filter, searchQuery, favorites),
+    [filter, searchQuery, favorites]
+  );
 
   // Navigate carousel in global modal view
   const goToNextMovie = () => {
